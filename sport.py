@@ -1,150 +1,99 @@
+import os
 import streamlit as st
 import pandas as pd
 import altair as alt
-from datetime import datetime
-from cfbd import Configuration, ApiClient, PlayersApi, StatsApi
+from dotenv import load_dotenv
+from cfbd import Configuration, ApiClient, TeamsApi, GamesApi, StatsApi, PlayersApi
+
+# Load environment variables
+load_dotenv()
 
 # Set up CFBD API client
 configuration = Configuration()
-configuration.api_key['Authorization'] = st.secrets["cfbd_api_key"]
+configuration.api_key['Authorization'] = os.getenv('CFBD_API_KEY')
 configuration.api_key_prefix['Authorization'] = 'Bearer'
 
 api_client = ApiClient(configuration)
-players_api = PlayersApi(api_client)
+teams_api = TeamsApi(api_client)
+games_api = GamesApi(api_client)
 stats_api = StatsApi(api_client)
+players_api = PlayersApi(api_client)
 
-def fetch_player_data(player_name, start_year, end_year):
-    try:
-        # Search for the player
-        search_results = players_api.player_search(search_term=player_name)
-        if not search_results:
-            st.error(f"No player found with name: {player_name}")
-            return None
-
-        player = search_results[0]
-        player_id = player.id
-
-        # Fetch player statistics for each year
-        all_stats = []
-        for year in range(start_year, end_year + 1):
-            stats = stats_api.get_player_season_stats(year=year, player_id=player_id)
-            if stats:
-                all_stats.extend(stats)
-
-        if not all_stats:
-            st.warning(f"No statistics found for {player_name} in the specified date range.")
-            return None
-
-        # Convert to DataFrame
-        df = pd.DataFrame([stat.to_dict() for stat in all_stats])
-        df['year'] = pd.to_datetime(df['year'], format='%Y')
-        return df
-
-    except Exception as e:
-        st.error(f"An error occurred while fetching data: {str(e)}")
-        return None
-
-def calculate_performance_metrics(data):
-    if data is None or data.empty:
-        return None
-
-    total_games = data['games'].sum()
-    total_rushing_yards = data['rushing_yards'].sum()
-    total_passing_yards = data['passing_yards'].sum()
-    total_touchdowns = data['rushing_td'].sum() + data['passing_td'].sum()
-    
-    return {
-        'Total Games': total_games,
-        'Total Rushing Yards': total_rushing_yards,
-        'Total Passing Yards': total_passing_yards,
-        'Total Touchdowns': total_touchdowns,
-        'Avg Rushing Yards/Game': f'{total_rushing_yards / total_games:.2f}',
-        'Avg Passing Yards/Game': f'{total_passing_yards / total_games:.2f}',
-        'Avg Touchdowns/Game': f'{total_touchdowns / total_games:.2f}'
-    }
-
-def plot_player_performance(data):
-    if data is None or data.empty:
-        return None
-
-    rushing_chart = alt.Chart(data).mark_line(color='blue').encode(
-        x='year:T',
-        y='rushing_yards:Q',
-        tooltip=['year:T', 'rushing_yards:Q']
-    ).properties(title='Rushing Yards Over Time')
-
-    passing_chart = alt.Chart(data).mark_line(color='red').encode(
-        x='year:T',
-        y='passing_yards:Q',
-        tooltip=['year:T', 'passing_yards:Q']
-    ).properties(title='Passing Yards Over Time')
-
-    return rushing_chart & passing_chart
-
-# Streamlit app
-st.title('College Football Player Analysis Dashboard')
+st.title('College Football Statistics Dashboard')
 
 # Sidebar for user input
-st.sidebar.header('User Input')
-player_name = st.sidebar.text_input('Enter Player Name', value='Trevor Lawrence')
-start_year = st.sidebar.number_input('Start Year', min_value=2000, max_value=datetime.now().year, value=2018)
-end_year = st.sidebar.number_input('End Year', min_value=2000, max_value=datetime.now().year, value=datetime.now().year)
+st.sidebar.header('Filters')
+year = st.sidebar.number_input('Year', min_value=2000, max_value=2023, value=2023)
+team = st.sidebar.selectbox('Team', [team.school for team in teams_api.get_fbs_teams(year=year)])
 
-# Fetch player data
-data = fetch_player_data(player_name, start_year, end_year)
+# Team Season Stats
+st.header(f'{team} Team Stats for {year}')
+team_stats = stats_api.get_team_season_stats(year=year, team=team)
+if team_stats:
+    df_team_stats = pd.DataFrame([stat.to_dict() for stat in team_stats])
+    st.dataframe(df_team_stats)
 
-if data is not None:
-    # Display player performance chart
-    st.subheader(f'{player_name} Performance Chart')
-    chart = plot_player_performance(data)
-    if chart:
-        st.altair_chart(chart, use_container_width=True)
+    # Visualize key stats
+    key_stats = ['totalYards', 'rushingYards', 'passingYards', 'pointsFor', 'pointsAgainst']
+    df_key_stats = df_team_stats[key_stats].melt()
+    chart = alt.Chart(df_key_stats).mark_bar().encode(
+        x='variable',
+        y='value',
+        color='variable'
+    ).properties(width=600, height=400)
+    st.altair_chart(chart)
 
-    # Display performance metrics
-    st.subheader('Performance Metrics')
-    metrics = calculate_performance_metrics(data)
-    if metrics:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Games", metrics['Total Games'])
-        col2.metric("Total Rushing Yards", metrics['Total Rushing Yards'])
-        col3.metric("Total Passing Yards", metrics['Total Passing Yards'])
-        col1.metric("Total Touchdowns", metrics['Total Touchdowns'])
-        col2.metric("Avg Rushing Yards/Game", metrics['Avg Rushing Yards/Game'])
-        col3.metric("Avg Passing Yards/Game", metrics['Avg Passing Yards/Game'])
+# Team Schedule and Results
+st.header(f'{team} Schedule and Results for {year}')
+games = games_api.get_games(year=year, team=team)
+if games:
+    df_games = pd.DataFrame([{
+        'date': game.start_date,
+        'opponent': game.away_team if game.home_team == team else game.home_team,
+        'result': f"{game.home_points}-{game.away_points}",
+        'winner': game.home_team if game.home_points > game.away_points else game.away_team
+    } for game in games])
+    st.dataframe(df_games)
 
-    # Player comparison
-    st.subheader('Player Comparison')
-    comparison_player = st.text_input('Enter another player name for comparison')
-    if comparison_player:
-        comparison_data = fetch_player_data(comparison_player, start_year, end_year)
-        if comparison_data is not None:
-            comparison_metrics = calculate_performance_metrics(comparison_data)
-            if comparison_metrics:
-                col1, col2 = st.columns(2)
-                col1.subheader(player_name)
-                col2.subheader(comparison_player)
-                
-                for metric in ['Total Games', 'Total Rushing Yards', 'Total Passing Yards', 'Total Touchdowns']:
-                    col1.metric(metric, metrics[metric])
-                    col2.metric(metric, comparison_metrics[metric])
+# Player Stats
+st.header(f'Top Players for {team} in {year}')
+player_stats = stats_api.get_player_season_stats(year=year, team=team)
+if player_stats:
+    df_player_stats = pd.DataFrame([stat.to_dict() for stat in player_stats])
+    
+    # Passing stats
+    st.subheader('Top Passers')
+    passing_stats = df_player_stats.nlargest(5, 'passing_yards')[['player', 'passing_yards', 'passing_tds', 'passing_int']]
+    st.dataframe(passing_stats)
 
-    # Historical trend analysis
-    st.subheader('Historical Trend Analysis')
-    trend_metric = st.selectbox('Select metric for trend analysis', ['rushing_yards', 'passing_yards', 'rushing_td', 'passing_td'])
-    if trend_metric in data.columns:
-        trend_chart = alt.Chart(data).mark_line().encode(
-            x='year:T',
-            y=f'{trend_metric}:Q',
-            tooltip=['year:T', f'{trend_metric}:Q']
-        ).properties(
-            width=600,
-            height=300,
-            title=f'{trend_metric} Trend Over Time'
-        )
-        st.altair_chart(trend_chart, use_container_width=True)
+    # Rushing stats
+    st.subheader('Top Rushers')
+    rushing_stats = df_player_stats.nlargest(5, 'rushing_yards')[['player', 'rushing_yards', 'rushing_tds', 'rushing_att']]
+    st.dataframe(rushing_stats)
 
-# User feedback
-st.subheader('User Feedback')
-feedback = st.text_area('Please provide any feedback or suggestions for improvement')
-if st.button('Submit Feedback'):
-    st.success('Thank you for your feedback!')
+    # Receiving stats
+    st.subheader('Top Receivers')
+    receiving_stats = df_player_stats.nlargest(5, 'receiving_yards')[['player', 'receiving_yards', 'receiving_tds', 'receptions']]
+    st.dataframe(receiving_stats)
+
+# Player Search
+st.header('Player Search')
+player_name = st.text_input('Enter player name')
+if player_name:
+    search_results = players_api.player_search(search_term=player_name)
+    if search_results:
+        player = search_results[0]
+        st.write(f"Name: {player.first_name} {player.last_name}")
+        st.write(f"Team: {player.team}")
+        st.write(f"Position: {player.position}")
+        st.write(f"Jersey: {player.jersey}")
+        
+        # Get player stats
+        player_stats = stats_api.get_player_season_stats(year=year, player_id=player.id)
+        if player_stats:
+            df_player_stats = pd.DataFrame([stat.to_dict() for stat in player_stats])
+            st.dataframe(df_player_stats)
+    else:
+        st.write("No player found with that name.")
+
+# Add more sections as needed (e.g., team rankings, conference stats, etc.)
