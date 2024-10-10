@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
+import numpy as np
+import altair as alt
 from datetime import datetime, timedelta
 
 # Placeholder function for fetching player data
@@ -9,8 +9,8 @@ def fetch_player_data(player_name, start_date, end_date):
     # This is where you'd integrate with a football stats API
     # For now, we'll return dummy data
     dates = pd.date_range(start=start_date, end=end_date, freq='W')
-    goals = pd.Series(np.random.randint(0, 3, size=len(dates)))
-    assists = pd.Series(np.random.randint(0, 2, size=len(dates)))
+    goals = np.random.randint(0, 3, size=len(dates))
+    assists = np.random.randint(0, 2, size=len(dates))
     return pd.DataFrame({'Date': dates, 'Goals': goals, 'Assists': assists})
 
 # Function to calculate performance metrics
@@ -31,11 +31,21 @@ def calculate_performance_metrics(data):
 
 # Function to plot player performance
 def plot_player_performance(data):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data['Date'], y=data['Goals'], mode='lines+markers', name='Goals'))
-    fig.add_trace(go.Scatter(x=data['Date'], y=data['Assists'], mode='lines+markers', name='Assists'))
-    fig.update_layout(title='Player Performance Over Time', xaxis_title='Date', yaxis_title='Count')
-    return fig
+    base = alt.Chart(data).encode(x='Date:T')
+    
+    goals_line = base.mark_line(color='blue').encode(y='Goals:Q')
+    goals_points = base.mark_circle(color='blue').encode(y='Goals:Q')
+    
+    assists_line = base.mark_line(color='red').encode(y='Assists:Q')
+    assists_points = base.mark_circle(color='red').encode(y='Assists:Q')
+    
+    chart = (goals_line + goals_points + assists_line + assists_points).properties(
+        width=600,
+        height=400,
+        title='Player Performance Over Time'
+    )
+    
+    return chart
 
 # Streamlit app
 st.title('Football Player Analysis Dashboard')
@@ -51,7 +61,7 @@ data = fetch_player_data(player_name, start_date, end_date)
 
 # Display player performance chart
 st.subheader(f'{player_name} Performance Chart')
-st.plotly_chart(plot_player_performance(data))
+st.altair_chart(plot_player_performance(data), use_container_width=True)
 
 # Display performance metrics
 st.subheader('Performance Metrics')
@@ -81,8 +91,16 @@ if comparison_player:
 # Historical trend analysis
 st.subheader('Historical Trend Analysis')
 trend_metric = st.selectbox('Select metric for trend analysis', ['Goals', 'Assists'])
-fig = px.line(data, x='Date', y=trend_metric, title=f'{trend_metric} Trend Over Time')
-st.plotly_chart(fig)
+trend_chart = alt.Chart(data).mark_line().encode(
+    x='Date:T',
+    y=f'{trend_metric}:Q',
+    tooltip=['Date:T', f'{trend_metric}:Q']
+).properties(
+    width=600,
+    height=300,
+    title=f'{trend_metric} Trend Over Time'
+)
+st.altair_chart(trend_chart, use_container_width=True)
 
 # Placeholder for advanced analytics
 st.subheader('Advanced Analytics')
