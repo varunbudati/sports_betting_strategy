@@ -1,16 +1,11 @@
-import os
 import streamlit as st
 import pandas as pd
 import altair as alt
-from dotenv import load_dotenv
 from cfbd import Configuration, ApiClient, TeamsApi, GamesApi, StatsApi, PlayersApi
-
-# Load environment variables
-load_dotenv()
 
 # Set up CFBD API client
 configuration = Configuration()
-configuration.api_key['Authorization'] = os.getenv('CFBD_API_KEY')
+configuration.api_key['Authorization'] = st.secrets["cfbd_api_key"]
 configuration.api_key_prefix['Authorization'] = 'Bearer'
 
 api_client = ApiClient(configuration)
